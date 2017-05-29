@@ -12,7 +12,7 @@ ldflags:
 requires:
 {
 	api:
-    {
-        le_cfg.api
-    }
+	{
+		le_cfg.api
+	}
 }
