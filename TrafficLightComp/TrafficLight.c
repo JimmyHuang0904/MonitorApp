@@ -1,20 +1,30 @@
 #include "legato.h"
 #include "le_cfg_interface.h"
-//#include "le_timer.h"
+//#include "le_gpio_interface.h"
 #include <curl/curl.h>
 
 #define SSL_ERROR_HELP    "Make sure your system date is set correctly (e.g. `date -s '2016-7-7'`)"
 #define SSL_ERROR_HELP_2  "You can check the minimum date for this SSL cert to work using: `openssl s_client -connect httpbin.org:443 2>/dev/null | openssl x509 -noout -dates`"
 
-static const char * Url = "http://jenkins-legato/job/Legato-Review/lastBuild/api/json?tree=result";
+static char * Url = "http://10.1.11.48/job/Legato-QA-Merged/lastBuild/api/json?tree=result";
 static const int seconds = 3;
+static bool exitCodeCheck = false;
 // http://jenkins-legato/ or http://10.1.11.48 //Mdm9x06-Manifest-Merged
 
-le_cfg_IteratorRef_t iteratorRef;
+static le_cfg_IteratorRef_t iteratorRef;
 
 struct MemoryStruct{
 	char *memory;
 	size_t size;
+};
+
+enum Result
+{
+    success = 10,
+    failure = 10,
+    aborted = 10,
+    null = 5,
+    unstable = 11
 };
 
 /* Takes the data from bufferPtr and allocates memory to store in userData.	*/
@@ -44,7 +54,42 @@ static size_t WriteCallback
 
     return realsize;
 }
+static void SetFlags
+(
+    char *PtrRes
+)
+{
+    enum Result status;
 
+    memmove(PtrRes, PtrRes+8, strlen(PtrRes));  // Truncates the first 8 characters (result")
+    LE_INFO("%s", PtrRes);
+    LE_INFO("size of ptrres = %i", strlen(PtrRes));
+    
+    if( ( (status = success) == strlen(PtrRes) ) && (PtrRes[1] == 'S') )
+    {
+        LE_INFO("success = %i", status);
+    }
+    else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'F') )
+    {
+        LE_INFO("failure = %i", status);
+    }
+    else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'F') )
+    {
+        LE_INFO("aborted = %i", status);
+    }
+    else if( (status = null) == strlen(PtrRes) )
+    {
+        LE_INFO("null = %i", status);
+    }
+    else if( (status = unstable) == strlen(PtrRes) )
+    {
+        LE_INFO("unstable = %i", status);
+    }
+    else
+    {
+        LE_ERROR("Check the length of PtrRes and corresponding Result statuses");
+    }
+}
 static void GetResult
 (
 	struct MemoryStruct buffer
@@ -56,6 +101,26 @@ static void GetResult
     PtrRes = strstr(buffer.memory, CheckString);
 
     LE_INFO("%s", PtrRes);
+
+    SetFlags(PtrRes);
+}
+
+static void GetHTTPCode
+(
+    CURL *curl
+)
+{
+    long http_code = 0;
+
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    if(http_code != 200)
+    {
+        LE_ERROR("Bad HTTP Code: %li", http_code);
+    }
+    else
+    {
+        LE_INFO("HTTP CODE IS: %li", http_code);
+    }
 }
 
 static void GetUrl
@@ -65,7 +130,6 @@ static void GetUrl
 {
     CURL *curl;					///<- Easy handle necessary for curl functions
     CURLcode res;				///<- Stores results of curl functions
-	long http_code = 0;
 
 	struct MemoryStruct buffer; ///<- Store size and data in buffer to be analyzed
 	buffer.memory = malloc(1);
@@ -101,16 +165,11 @@ static void GetUrl
         	GetResult(buffer);
         }
 
-        // getting http code
-		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-		if(http_code != 200)
-		{
-			LE_ERROR("Bad HTTP Code: %li", http_code);
-		}
-		else
-		{
-			LE_INFO("HTTP CODE IS: %li", http_code);
-		}
+        // TrafficLight:/exitCode/CheckFlag to determine whether to check HTTPcode or not
+        if(exitCodeCheck)
+        {
+            GetHTTPCode(curl);
+        }
 
         curl_easy_cleanup(curl);
     }
@@ -122,63 +181,54 @@ static void GetUrl
     curl_global_cleanup();
 }
 
-// static void CfgTreeSet
-// (
-//     void
-// )
-// {
+static void CfgTreeInit
+(
+    void
+)
+{
+    ////Setting isBoolSet to true
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/");
+    le_cfg_SetString(iteratorRef, "Url", Url);
+    le_cfg_CommitTxn(iteratorRef);
 
-//     le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/test");
-//     le_cfg_SetBool(iteratorRef, "isBoolSet", true);
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
+    le_cfg_SetBool(iteratorRef, "CheckFlag", true);
+    le_cfg_CommitTxn(iteratorRef);
 
-//     ///////
-//     le_cfg_CreateReadTxn("TrafficLight:/test");
-//     bool myBoolVal = le_cfg_GetBool(iteratorRef, "isBoolSet", false);
+    // iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
+    // le_cfg_SetBool(iteratorRef, "Expected", true);
+    // le_cfg_CommitTxn(iteratorRef);
 
-//     LE_INFO("myBoolVal=%d", myBoolVal);
+    // iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/number");
+    // le_cfg_SetInt(iteratorRef, "thirteen", 13);
+    // le_cfg_CommitTxn(iteratorRef);
+}
 
-//     if (myBoolVal)
-//     {
-//         LE_INFO("The test value was set.");
-//     }
-//     else
-//     {
-//         LE_INFO("The test value was not set.");
-//     }
+static void CfgTreeGet
+(
+    void
+)
+{
+    // iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
+    // le_cfg_GetString(iteratorRef, "Url", Url, 80, "Failed Url");
+    // LE_INFO("Url is %s", Url);
 
-// }
+    // TrafficLight:/exitCode/CheckFlag to determine whether to check HTTPcode or not
+    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/exitCode");
+    exitCodeCheck = le_cfg_GetBool(iteratorRef, "CheckFlag", false);
+    le_cfg_CancelTxn(iteratorRef);
 
-// static void CfgTreeGet
-// (
-//     void
-// )
-// {
+    LE_INFO("exit code check = %i", (int) exitCodeCheck); //unnecessary
+}
 
-//     le_cfg_CreateReadTxn("TrafficLight:/test");
-//     bool myBoolVal = le_cfg_GetBool(iteratorRef, "isBoolSet", false);
-
-//     float myFloatVal = le_cfg_GetFloat(iteratorRef, "isFloatSet", 3);
-
-//     LE_INFO("myBoolVal=%d, myFloatVal=%f", myBoolVal, myFloatVal);
-
-//     if (myBoolVal)
-//     {
-//         LE_INFO("The test value was set.");
-//     }
-//     else
-//     {
-//         LE_INFO("The test value was not set.");
-//     }
-// }
 static void Polling
 (
     le_timer_Ref_t timerRef
 )
 {
     LE_INFO("-------------------------- In polling function--------------------");    
-
+    CfgTreeGet();
     GetUrl();
-
 }
 
 //---------------------------------------------------
@@ -190,7 +240,7 @@ COMPONENT_INIT
 {
 	curl_global_init(CURL_GLOBAL_ALL);  //maybe parameter can just be CURL_GLOBAL_SSL
 
-    //CfgTreeSet();
+    CfgTreeInit();
     //CfgTreeGet();
 
     le_timer_Ref_t PollingTimer = le_timer_Create("PollingTimer");
@@ -199,5 +249,4 @@ COMPONENT_INIT
     le_timer_SetRepeat(PollingTimer, 0); // repeat indefinitely
     le_timer_SetHandler(PollingTimer, Polling);
     le_timer_Start(PollingTimer);
-
 }
