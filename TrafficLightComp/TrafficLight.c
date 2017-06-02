@@ -6,19 +6,21 @@
 #define SSL_ERROR_HELP    "Make sure your system date is set correctly (e.g. `date -s '2016-7-7'`)"
 #define SSL_ERROR_HELP_2  "You can check the minimum date for this SSL cert to work using: `openssl s_client -connect httpbin.org:443 2>/dev/null | openssl x509 -noout -dates`"
 
-static char * Url = "http://10.1.11.48/job/Legato-QA-Merged/lastBuild/api/json?tree=result";
+static char * Url = "http://10.1.11.48/job/Legato-QA-Merged/lastBuild/api/json?tree=result";    ///<- Url has to be char * type and not an array, else curl will not perform
 
-static bool exitCodeCheck ;
-static bool contentCheck ;
+static char * contentExpected;
+static bool exitCodeCheck;
+static bool contentCheck;
+static int http_code = 0;
 
-static const int seconds = 3;
+static const int seconds = 3;   ///<- Polling timer interval in seconds
 static le_cfg_IteratorRef_t iteratorRef;
 
 static void CfgTreeSet(void);
 
 struct MemoryStruct{
-	char *memory;
-	size_t size;
+    char *memory;
+    size_t size;
 };
 
 enum Result
@@ -65,45 +67,66 @@ static void SetFlags
     enum Result status;
 
     memmove(PtrRes, PtrRes+8, strlen(PtrRes));  // Truncates the first 8 characters (result")
-    LE_INFO("%s", PtrRes);
-    LE_INFO("size of ptrres = %i", strlen(PtrRes));
+    // LE_INFO("%s", PtrRes);   //Log for debugging on console
+    // LE_INFO("size of ptrres = %i", strlen(PtrRes));
     
     if( ( (status = success) == strlen(PtrRes) ) && (PtrRes[1] == 'S') )
     {
-        LE_INFO("success = %i", status);
+        //LE_INFO("success = %i", status);
+        contentExpected = "SUCCESS";
     }
     else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'F') )
     {
-        LE_INFO("failure = %i", status);
+        //LE_INFO("failure = %i", status);
+        contentExpected = "FAILURE";
     }
-    else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'F') )
+    else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'A') )
     {
-        LE_INFO("aborted = %i", status);
+        //LE_INFO("aborted = %i", status);
+        contentExpected = "ABORTED";
     }
     else if( (status = null) == strlen(PtrRes) )
     {
-        LE_INFO("null = %i", status);
+        //LE_INFO("null = %i", status);
+        contentExpected = "NULL";
     }
     else if( (status = unstable) == strlen(PtrRes) )
     {
-        LE_INFO("unstable = %i", status);
+        //LE_INFO("unstable = %i", status);
+        contentExpected = "UNSTABLE";
     }
     else
     {
         LE_ERROR("Check the length of PtrRes and corresponding Result statuses");
+        return;
     }
+
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
+    le_cfg_SetString(iteratorRef, "contentResult", contentExpected);
+    le_cfg_CommitTxn(iteratorRef);
+
+    LE_INFO("contentExpected: %s",contentExpected);
 }
+
 static void GetResult
 (
-	struct MemoryStruct buffer
+    struct MemoryStruct buffer
 )
 {
-	char *CheckString = "result";   	///<- Check for the string 'result' in the html file
-	char *PtrRes;						///<- string that prints the characters following result
+    char *CheckString = "result";   	///<- Check for the string 'result' in the html file
+    char *PtrRes;						///<- string that prints the characters following result
 
     PtrRes = strstr(buffer.memory, CheckString);
-
-    SetFlags(PtrRes);
+    
+    if( PtrRes != NULL )
+    {
+        SetFlags(PtrRes);
+    }
+    else
+    {
+        contentExpected = "Not a valid Url for checking results!";
+        LE_ERROR("contentExpected: %s",contentExpected);
+    }
 }
 
 static void GetHTTPCode
@@ -111,13 +134,13 @@ static void GetHTTPCode
     CURL *curl
 )
 {
-    int http_code = 0;
-
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
-    le_cfg_SetInt(iteratorRef, "Expected", http_code);
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
+    le_cfg_SetInt(iteratorRef, "Result", http_code);
     le_cfg_CommitTxn(iteratorRef);
+
+    LE_INFO("exitCodeExpected (http_code): %i", http_code);     // For debugging log
 }
 
 static void GetUrl
@@ -128,9 +151,22 @@ static void GetUrl
     CURL *curl;					///<- Easy handle necessary for curl functions
     CURLcode res;				///<- Stores results of curl functions
 
-	struct MemoryStruct buffer; ///<- Store size and data in buffer to be analyzed
-	buffer.memory = malloc(1);
-	buffer.size = 0;
+    struct MemoryStruct buffer; ///<- Store size and data in buffer to be analyzed
+    buffer.memory = malloc(1);
+    buffer.size = 0;
+
+    //-----------------------Should be implemented in CfgTreeGet. Problem: Global Url is not being overwritten -------//
+    char stringBuffer[100] = { 0 };
+    char * ptrBuffer = stringBuffer;    ///<- Cast pointer to stringBuffer to match type with Url.
+
+    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
+    le_cfg_GetString(iteratorRef, "Url", stringBuffer, sizeof(stringBuffer), Url);
+    le_cfg_CancelTxn(iteratorRef);
+    
+    Url = ptrBuffer;
+
+    LE_INFO("Url: %s", Url);
+    //-----------------------------------------------------------------------------------------------------------------//
 
     curl = curl_easy_init();
     if (curl)
@@ -157,15 +193,22 @@ static void GetUrl
                 LE_ERROR(SSL_ERROR_HELP_2);
             }
         }
-        else
-        {
-        	GetResult(buffer);
-        }
 
-        // TrafficLight:/exitCode/CheckFlag to determine whether to check HTTPcode or not
+        // TrafficLight:/info/exitCode/CheckFlag to determine whether to check HTTPcode or not
+        LE_INFO("exitCodeCheck: %s", exitCodeCheck ? "true" : "false"); //unnecessary
         if(exitCodeCheck)
         {
             GetHTTPCode(curl);
+        }
+        else
+        {
+            CfgTreeSet();
+        }
+        // TrafficLight:/info/content/CheckFlag to determine whether to check result status or not
+        LE_INFO("contentCheck: %s", contentCheck ? "true" : "false"); //unnecessary
+        if(contentCheck)
+        {
+            GetResult(buffer);
         }
         else
         {
@@ -192,17 +235,21 @@ static void CfgTreeInit
     le_cfg_SetString(iteratorRef, "Url", Url);
     le_cfg_CommitTxn(iteratorRef);
 
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
     le_cfg_SetBool(iteratorRef, "CheckFlag", true);
     le_cfg_CommitTxn(iteratorRef);
 
     // TrafficLight:/exitCode/Expected outputs the httpCode, if not 200, then error
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
-    le_cfg_SetInt(iteratorRef, "Expected", 200);
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
+    le_cfg_SetInt(iteratorRef, "Result", 0);
     le_cfg_CommitTxn(iteratorRef);
 
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/content");
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
     le_cfg_SetBool(iteratorRef, "CheckFlag", true);
+    le_cfg_CommitTxn(iteratorRef);
+
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
+    le_cfg_SetString(iteratorRef, "contentResult", "");
     le_cfg_CommitTxn(iteratorRef);
 }
 
@@ -213,12 +260,17 @@ static void CfgTreeSet
 {
     if(!exitCodeCheck)
     {
-        iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
-        le_cfg_SetInt(iteratorRef, "Expected", 0);
+        iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
+        le_cfg_SetInt(iteratorRef, "Result", 0);
         le_cfg_CommitTxn(iteratorRef);
-        return;
     }
-
+    if(!contentCheck)
+    {
+        iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
+        le_cfg_SetString(iteratorRef, "contentResult", "");
+        le_cfg_CommitTxn(iteratorRef);
+    }
+    return;
 }
 
 static void CfgTreeGet
@@ -226,27 +278,25 @@ static void CfgTreeGet
     void
 )
 {
-    char stringBuffer[100] = { 0 };
+    // char stringBuffer[100] = { 0 };
+    // // char * c = stringBuffer;
 
-    LE_INFO("in configtreeget, sizeof(stringBuffer)= %i", sizeof(stringBuffer));
+    // iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
+    // le_cfg_GetString(iteratorRef, "Url", stringBuffer, sizeof(stringBuffer), Url);
+    // le_cfg_CancelTxn(iteratorRef);
 
-    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
-    le_cfg_GetString(iteratorRef, "Url", stringBuffer, sizeof(stringBuffer), Url);
-    LE_INFO("Url is %s", stringBuffer );
-    le_cfg_CancelTxn(iteratorRef);
+    // LE_INFO("Url is %s, strlen(url)=%i, sizeof(url)= %i, ", Url, strlen(Url), sizeof(Url) );
+    // LE_INFO("Url is %s, strlen(url)=%i, sizeof(url)= %i, ", stringBuffer, strlen(stringBuffer), sizeof(stringBuffer) );
+    // LE_INFO("Url is %s, strlen(url)=%i, sizeof(url)= %i, ", c, strlen(c), sizeof(c) );
 
     // TrafficLight:/exitCode/CheckFlag to determine whether to check HTTPcode or not
-    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/exitCode");
+    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/info/exitCode");
     exitCodeCheck = le_cfg_GetBool(iteratorRef, "CheckFlag", false);
     le_cfg_CancelTxn(iteratorRef);
 
-    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/content");
+    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/info/content");
     contentCheck = le_cfg_GetBool(iteratorRef, "CheckFlag", false);
     le_cfg_CancelTxn(iteratorRef);
-
-    LE_INFO("exit code check = %i", (int) exitCodeCheck); //unnecessary
-
-
 }
 
 static void Polling
@@ -254,7 +304,7 @@ static void Polling
     le_timer_Ref_t timerRef
 )
 {
-    LE_INFO("-------------------------- In polling function--------------------");    
+    LE_INFO("-------------------------- In polling function--------------------");
     CfgTreeGet();
     GetUrl();
 }
@@ -266,7 +316,7 @@ static void Polling
 //---------------------------------------------------
 COMPONENT_INIT
 {
-	curl_global_init(CURL_GLOBAL_ALL);  //maybe parameter can just be CURL_GLOBAL_SSL
+    curl_global_init(CURL_GLOBAL_ALL);  //maybe parameter can just be CURL_GLOBAL_SSL
 
     CfgTreeInit();
     //CfgTreeGet();
