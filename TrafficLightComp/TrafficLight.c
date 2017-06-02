@@ -7,11 +7,14 @@
 #define SSL_ERROR_HELP_2  "You can check the minimum date for this SSL cert to work using: `openssl s_client -connect httpbin.org:443 2>/dev/null | openssl x509 -noout -dates`"
 
 static char * Url = "http://10.1.11.48/job/Legato-QA-Merged/lastBuild/api/json?tree=result";
-static const int seconds = 3;
-static bool exitCodeCheck = false;
-// http://jenkins-legato/ or http://10.1.11.48 //Mdm9x06-Manifest-Merged
 
+static bool exitCodeCheck ;
+static bool contentCheck ;
+
+static const int seconds = 3;
 static le_cfg_IteratorRef_t iteratorRef;
+
+static void CfgTreeSet(void);
 
 struct MemoryStruct{
 	char *memory;
@@ -100,8 +103,6 @@ static void GetResult
 
     PtrRes = strstr(buffer.memory, CheckString);
 
-    LE_INFO("%s", PtrRes);
-
     SetFlags(PtrRes);
 }
 
@@ -110,17 +111,13 @@ static void GetHTTPCode
     CURL *curl
 )
 {
-    long http_code = 0;
+    int http_code = 0;
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    if(http_code != 200)
-    {
-        LE_ERROR("Bad HTTP Code: %li", http_code);
-    }
-    else
-    {
-        LE_INFO("HTTP CODE IS: %li", http_code);
-    }
+    
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
+    le_cfg_SetInt(iteratorRef, "Expected", http_code);
+    le_cfg_CommitTxn(iteratorRef);
 }
 
 static void GetUrl
@@ -170,6 +167,10 @@ static void GetUrl
         {
             GetHTTPCode(curl);
         }
+        else
+        {
+            CfgTreeSet();
+        }
 
         curl_easy_cleanup(curl);
     }
@@ -195,13 +196,29 @@ static void CfgTreeInit
     le_cfg_SetBool(iteratorRef, "CheckFlag", true);
     le_cfg_CommitTxn(iteratorRef);
 
-    // iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
-    // le_cfg_SetBool(iteratorRef, "Expected", true);
-    // le_cfg_CommitTxn(iteratorRef);
+    // TrafficLight:/exitCode/Expected outputs the httpCode, if not 200, then error
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
+    le_cfg_SetInt(iteratorRef, "Expected", 200);
+    le_cfg_CommitTxn(iteratorRef);
 
-    // iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/number");
-    // le_cfg_SetInt(iteratorRef, "thirteen", 13);
-    // le_cfg_CommitTxn(iteratorRef);
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/content");
+    le_cfg_SetBool(iteratorRef, "CheckFlag", true);
+    le_cfg_CommitTxn(iteratorRef);
+}
+
+static void CfgTreeSet
+(
+    void
+)
+{
+    if(!exitCodeCheck)
+    {
+        iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/exitCode");
+        le_cfg_SetInt(iteratorRef, "Expected", 0);
+        le_cfg_CommitTxn(iteratorRef);
+        return;
+    }
+
 }
 
 static void CfgTreeGet
@@ -209,16 +226,27 @@ static void CfgTreeGet
     void
 )
 {
-    // iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
-    // le_cfg_GetString(iteratorRef, "Url", Url, 80, "Failed Url");
-    // LE_INFO("Url is %s", Url);
+    char stringBuffer[100] = { 0 };
+
+    LE_INFO("in configtreeget, sizeof(stringBuffer)= %i", sizeof(stringBuffer));
+
+    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
+    le_cfg_GetString(iteratorRef, "Url", stringBuffer, sizeof(stringBuffer), Url);
+    LE_INFO("Url is %s", stringBuffer );
+    le_cfg_CancelTxn(iteratorRef);
 
     // TrafficLight:/exitCode/CheckFlag to determine whether to check HTTPcode or not
     iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/exitCode");
     exitCodeCheck = le_cfg_GetBool(iteratorRef, "CheckFlag", false);
     le_cfg_CancelTxn(iteratorRef);
 
+    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/content");
+    contentCheck = le_cfg_GetBool(iteratorRef, "CheckFlag", false);
+    le_cfg_CancelTxn(iteratorRef);
+
     LE_INFO("exit code check = %i", (int) exitCodeCheck); //unnecessary
+
+
 }
 
 static void Polling
