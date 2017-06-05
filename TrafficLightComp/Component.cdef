@@ -3,7 +3,6 @@ sources:
 	TrafficLight.c
 }
 
-
 ldflags: 
 {
 	-lcurl
@@ -14,5 +13,8 @@ requires:
 	api:
 	{
 		le_cfg.api
+		le_gpioPin21 = le_gpio.api
+		le_gpioPin32 = le_gpio.api
+		le_gpioPin7 = le_gpio.api
 	}
 }

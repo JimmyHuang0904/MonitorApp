@@ -3,6 +3,13 @@ executables:
 	TrafficLight = ( TrafficLightComp )
 }
 
+bindings:
+{
+    TrafficLight.TrafficLightComp.le_gpioPin21 -> gpioService.le_gpioPin21
+    TrafficLight.TrafficLightComp.le_gpioPin32 -> gpioService.le_gpioPin32
+    TrafficLight.TrafficLightComp.le_gpioPin7 -> gpioService.le_gpioPin7
+}
+
 processes:
 {
 	run:

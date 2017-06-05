@@ -1,6 +1,6 @@
 #include "legato.h"
 #include "le_cfg_interface.h"
-//#include "le_gpio_interface.h"
+#include "interfaces.h"
 #include <curl/curl.h>
 
 #define SSL_ERROR_HELP    "Make sure your system date is set correctly (e.g. `date -s '2016-7-7'`)"
@@ -13,10 +13,19 @@ static bool exitCodeCheck;
 static bool contentCheck;
 static int http_code = 0;
 
-static const int seconds = 3;   ///<- Polling timer interval in seconds
-static le_cfg_IteratorRef_t iteratorRef;
+static int seconds = 3;   ///<- Polling timer interval in seconds
 
+static le_cfg_IteratorRef_t iteratorRef;
+static le_timer_Ref_t PollingTimer;
+
+// Header declaration
+static void GPIO_Pin_Init(void);
+static void CfgTreeInit(void);
 static void CfgTreeSet(void);
+static void CfgTreeGet(void);
+static void Polling(le_timer_Ref_t timerRef);
+static void TimerHandle(void);
+
 
 struct MemoryStruct{
     char *memory;
@@ -31,6 +40,36 @@ enum Result
     null = 5,
     unstable = 11
 };
+
+static void GreenLight
+(
+    void
+)
+{
+    le_gpioPin21_SetPushPullOutput(LE_GPIOPIN21_ACTIVE_HIGH, false);
+    le_gpioPin32_SetPushPullOutput(LE_GPIOPIN32_ACTIVE_HIGH, false);
+    le_gpioPin7_SetPushPullOutput(LE_GPIOPIN7_ACTIVE_HIGH, true);
+}
+
+static void YellowLight
+(
+    void
+)
+{
+    le_gpioPin21_SetPushPullOutput(LE_GPIOPIN21_ACTIVE_HIGH, false);
+    le_gpioPin7_SetPushPullOutput(LE_GPIOPIN7_ACTIVE_HIGH, false);
+    le_gpioPin32_SetPushPullOutput(LE_GPIOPIN32_ACTIVE_HIGH, true);
+}
+
+static void RedLight
+(
+    void
+)
+{
+    le_gpioPin7_SetPushPullOutput(LE_GPIOPIN7_ACTIVE_HIGH, false);
+    le_gpioPin32_SetPushPullOutput(LE_GPIOPIN32_ACTIVE_HIGH, false);
+    le_gpioPin21_SetPushPullOutput(LE_GPIOPIN21_ACTIVE_HIGH, true);
+}
 
 /* Takes the data from bufferPtr and allocates memory to store in userData.	*/
 /* The bufferPtr data holds the HTML text.									*/
@@ -59,6 +98,7 @@ static size_t WriteCallback
 
     return realsize;
 }
+
 static void SetFlags
 (
     char *PtrRes
@@ -74,26 +114,31 @@ static void SetFlags
     {
         //LE_INFO("success = %i", status);
         contentExpected = "SUCCESS";
+        GreenLight();
     }
     else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'F') )
     {
         //LE_INFO("failure = %i", status);
         contentExpected = "FAILURE";
+        RedLight();
     }
     else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'A') )
     {
         //LE_INFO("aborted = %i", status);
         contentExpected = "ABORTED";
+        YellowLight();
     }
     else if( (status = null) == strlen(PtrRes) )
     {
         //LE_INFO("null = %i", status);
         contentExpected = "NULL";
+        YellowLight();
     }
     else if( (status = unstable) == strlen(PtrRes) )
     {
         //LE_INFO("unstable = %i", status);
         contentExpected = "UNSTABLE";
+        YellowLight();
     }
     else
     {
@@ -162,7 +207,7 @@ static void GetUrl
     iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
     le_cfg_GetString(iteratorRef, "Url", stringBuffer, sizeof(stringBuffer), Url);
     le_cfg_CancelTxn(iteratorRef);
-    
+
     Url = ptrBuffer;
 
     LE_INFO("Url: %s", Url);
@@ -173,7 +218,7 @@ static void GetUrl
     {
         curl_easy_setopt(curl, CURLOPT_URL, Url);
 
-        //Write data into @buffer. The conditionals check for errors 
+        //Write data into @buffer. The conditionals check for errors
         if( (res = curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback) ) == CURLE_WRITE_ERROR){
         	LE_ERROR("curlopt_writefunction failed: %s", curl_easy_strerror(res));
         }
@@ -195,7 +240,7 @@ static void GetUrl
         }
 
         // TrafficLight:/info/exitCode/CheckFlag to determine whether to check HTTPcode or not
-        LE_INFO("exitCodeCheck: %s", exitCodeCheck ? "true" : "false"); //unnecessary
+        LE_INFO("exitCodeCheck: %s", exitCodeCheck ? "true" : "false");
         if(exitCodeCheck)
         {
             GetHTTPCode(curl);
@@ -205,7 +250,7 @@ static void GetUrl
             CfgTreeSet();
         }
         // TrafficLight:/info/content/CheckFlag to determine whether to check result status or not
-        LE_INFO("contentCheck: %s", contentCheck ? "true" : "false"); //unnecessary
+        LE_INFO("contentCheck: %s", contentCheck ? "true" : "false");
         if(contentCheck)
         {
             GetResult(buffer);
@@ -230,26 +275,49 @@ static void CfgTreeInit
     void
 )
 {
-    ////Setting isBoolSet to true
+    // Set default Url to the global variable Url
     iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/");
     le_cfg_SetString(iteratorRef, "Url", Url);
     le_cfg_CommitTxn(iteratorRef);
 
+    /* config get TrafficLight:/info/exitCode/CheckFlag
+    Description: Settable flag to check the http_code
+    Default: true
+    */
     iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
     le_cfg_SetBool(iteratorRef, "CheckFlag", true);
     le_cfg_CommitTxn(iteratorRef);
 
-    // TrafficLight:/exitCode/Expected outputs the httpCode, if not 200, then error
+    /* config get TrafficLight:/info/exitCode/Result
+    Description: Writes the result of the httpCode. Error if http_code != 200
+    Default: 0
+    */
     iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
     le_cfg_SetInt(iteratorRef, "Result", 0);
     le_cfg_CommitTxn(iteratorRef);
 
+    /* config get TrafficLight:/info/content/CheckFlag
+    Description: Settable flag to check the result of job status
+    Default: true
+    */
     iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
     le_cfg_SetBool(iteratorRef, "CheckFlag", true);
     le_cfg_CommitTxn(iteratorRef);
 
+    /* config get TrafficLight:/info/content/contentResult
+    Description: Writes the result of job status. Outputs: SUCCESS, FAILURE, ABORTED, NULL, or UNSTABLE
+    Default: 
+    */
     iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
     le_cfg_SetString(iteratorRef, "contentResult", "");
+    le_cfg_CommitTxn(iteratorRef);
+
+    /* config get TrafficLight:/PollIntervalSec
+    Description: Polling timer intervals in second
+    Default: 3 seconds
+    */
+    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/");
+    le_cfg_SetInt(iteratorRef, "PollIntervalSec", 3);
     le_cfg_CommitTxn(iteratorRef);
 }
 
@@ -278,6 +346,7 @@ static void CfgTreeGet
     void
 )
 {
+    int timerset;
     // char stringBuffer[100] = { 0 };
     // // char * c = stringBuffer;
 
@@ -297,6 +366,61 @@ static void CfgTreeGet
     iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/info/content");
     contentCheck = le_cfg_GetBool(iteratorRef, "CheckFlag", false);
     le_cfg_CancelTxn(iteratorRef);
+
+    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
+    timerset = le_cfg_GetInt(iteratorRef, "PollIntervalSec", seconds);
+    le_cfg_CancelTxn(iteratorRef);
+
+    if(timerset != seconds)
+    {
+        seconds = timerset;
+        TimerHandle();
+    }
+}
+
+static void GPIO_Pin_Init
+(
+    void
+)
+{
+    le_gpioPin21_Activate();
+    le_gpioPin21_EnablePullUp();
+
+    le_gpioPin32_Activate();
+    le_gpioPin32_EnablePullUp();
+
+    le_gpioPin7_Activate();
+    le_gpioPin7_EnablePullUp();
+
+    // Set all output to logic 0 
+    le_gpioPin21_SetPushPullOutput(LE_GPIOPIN21_ACTIVE_HIGH, false);
+    le_gpioPin32_SetPushPullOutput(LE_GPIOPIN32_ACTIVE_HIGH, false);
+    le_gpioPin7_SetPushPullOutput(LE_GPIOPIN7_ACTIVE_HIGH, false);
+    LE_INFO("Pin21 read PP - High: %d", le_gpioPin21_Read());
+    LE_INFO("Pin32 read PP - High: %d", le_gpioPin32_Read());
+    LE_INFO("Pin7 read PP - High: %d", le_gpioPin7_Read());
+}
+
+/* 
+Description: 	1. Initialize the indefinitely repeating PollingTimer to x seconds
+				2. Reset polling interval from CfgTreeGet
+Default: seconds = 3;
+*/
+static void TimerHandle
+(
+    void
+)
+{
+	if(le_timer_IsRunning(PollingTimer))
+	{
+		le_timer_Stop(PollingTimer);
+	}
+	LE_INFO("SECONDS IS %i", seconds);
+    le_clk_Time_t interval = {seconds, 0}; //first parameter is the seconds
+    le_timer_SetInterval(PollingTimer, interval);
+    le_timer_SetRepeat(PollingTimer, 0); // repeat indefinitely
+    le_timer_SetHandler(PollingTimer, Polling);
+    le_timer_Start(PollingTimer);
 }
 
 static void Polling
@@ -316,15 +440,10 @@ static void Polling
 //---------------------------------------------------
 COMPONENT_INIT
 {
-    curl_global_init(CURL_GLOBAL_ALL);  //maybe parameter can just be CURL_GLOBAL_SSL
-
+    curl_global_init(CURL_GLOBAL_ALL);
+    GPIO_Pin_Init();
     CfgTreeInit();
-    //CfgTreeGet();
 
-    le_timer_Ref_t PollingTimer = le_timer_Create("PollingTimer");
-    le_clk_Time_t interval = {seconds, 0}; //first parameter is the seconds
-    le_timer_SetInterval(PollingTimer, interval);
-    le_timer_SetRepeat(PollingTimer, 0); // repeat indefinitely
-    le_timer_SetHandler(PollingTimer, Polling);
-    le_timer_Start(PollingTimer);
+    PollingTimer = le_timer_Create("PollingTimer");  //maybe can move to TimerHandle() function somehow?
+    TimerHandle();
 }
