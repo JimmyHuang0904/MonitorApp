@@ -15,3 +15,5 @@ This was developed using:
 -3x 100 Ohm resistor
 
 #### Schematic Diagram
+
+![TrafficLight Schematic](https://github.com/JimmyHuang0904/MonitorApp/blob/master/TrafficLight-1.png)
