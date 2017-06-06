@@ -6,14 +6,14 @@
 #define SSL_ERROR_HELP    "Make sure your system date is set correctly (e.g. `date -s '2016-7-7'`)"
 #define SSL_ERROR_HELP_2  "You can check the minimum date for this SSL cert to work using: `openssl s_client -connect httpbin.org:443 2>/dev/null | openssl x509 -noout -dates`"
 
-static char * Url = "http://10.1.11.48/job/Legato-QA-Merged/lastBuild/api/json?tree=result";    ///<- Url has to be char * type and not an array, else curl will not perform
+static char * Url = "http://10.1.11.48/job/Legato-QA-Merged/lastCompletedBuild/api/json?tree=result";    ///<- Url has to be char * type and not an array, else curl will not perform
 
 static char * contentExpected;
 static bool exitCodeCheck;
 static bool contentCheck;
 static int http_code = 0;
 
-static int seconds = 3;   ///<- Polling timer interval in seconds
+static int seconds = 10;   ///<- Polling timer interval in seconds
 
 static le_cfg_IteratorRef_t iteratorRef;
 static le_timer_Ref_t PollingTimer;
@@ -71,6 +71,17 @@ static void RedLight
     le_gpioPin21_SetPushPullOutput(LE_GPIOPIN21_ACTIVE_HIGH, true);
 }
 
+static void NoLight
+(
+    void
+)
+{
+    // Set all output to logic 0
+    le_gpioPin21_SetPushPullOutput(LE_GPIOPIN21_ACTIVE_HIGH, false);
+    le_gpioPin32_SetPushPullOutput(LE_GPIOPIN32_ACTIVE_HIGH, false);
+    le_gpioPin7_SetPushPullOutput(LE_GPIOPIN7_ACTIVE_HIGH, false);
+}
+
 /* Takes the data from bufferPtr and allocates memory to store in userData.	*/
 /* The bufferPtr data holds the HTML text.									*/
 /*						 													*/
@@ -108,41 +119,38 @@ static void SetFlags
 
     memmove(PtrRes, PtrRes+8, strlen(PtrRes));  // Truncates the first 8 characters (result")
     // LE_INFO("%s", PtrRes);   //Log for debugging on console
-    // LE_INFO("size of ptrres = %i", strlen(PtrRes));
     
     if( ( (status = success) == strlen(PtrRes) ) && (PtrRes[1] == 'S') )
     {
-        //LE_INFO("success = %i", status);
         contentExpected = "SUCCESS";
         GreenLight();
     }
     else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'F') )
     {
-        //LE_INFO("failure = %i", status);
         contentExpected = "FAILURE";
         RedLight();
     }
     else if( ( (status = failure) == strlen(PtrRes) ) && (PtrRes[1] == 'A') )
     {
-        //LE_INFO("aborted = %i", status);
         contentExpected = "ABORTED";
         YellowLight();
     }
     else if( (status = null) == strlen(PtrRes) )
     {
-        //LE_INFO("null = %i", status);
         contentExpected = "NULL";
         YellowLight();
     }
     else if( (status = unstable) == strlen(PtrRes) )
     {
-        //LE_INFO("unstable = %i", status);
         contentExpected = "UNSTABLE";
         YellowLight();
     }
     else
     {
-        LE_ERROR("Check the length of PtrRes and corresponding Result statuses");
+        contentExpected = "ERROR";
+        NoLight();
+        LE_ERROR("Check the length of PtrRes and corresponding enum Result statuses. Make sure the URL ends in /json?tree=result");
+        LE_INFO("size of PtrRes = %i", strlen(PtrRes));
         return;
     }
 
@@ -169,7 +177,7 @@ static void GetResult
     }
     else
     {
-        contentExpected = "Not a valid Url for checking results!";
+        contentExpected = "Not a valid Url for checking results! (This app is specific to print the results from URL";
         LE_ERROR("contentExpected: %s",contentExpected);
     }
 }
@@ -186,6 +194,12 @@ static void GetHTTPCode
     le_cfg_CommitTxn(iteratorRef);
 
     LE_INFO("exitCodeExpected (http_code): %i", http_code);     // For debugging log
+    
+    // May flash yellow at the interval of seconds if (http_code != 200) && (!contentCheck)
+    if(http_code != 200)
+    {
+        YellowLight();
+    }
 }
 
 static void GetUrl
@@ -258,6 +272,7 @@ static void GetUrl
         else
         {
             CfgTreeSet();
+            NoLight();
         }
 
         curl_easy_cleanup(curl);
@@ -317,7 +332,7 @@ static void CfgTreeInit
     Default: 3 seconds
     */
     iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/");
-    le_cfg_SetInt(iteratorRef, "PollIntervalSec", 3);
+    le_cfg_SetInt(iteratorRef, "PollIntervalSec", seconds);
     le_cfg_CommitTxn(iteratorRef);
 }
 
@@ -392,10 +407,8 @@ static void GPIO_Pin_Init
     le_gpioPin7_Activate();
     le_gpioPin7_EnablePullUp();
 
-    // Set all output to logic 0 
-    le_gpioPin21_SetPushPullOutput(LE_GPIOPIN21_ACTIVE_HIGH, false);
-    le_gpioPin32_SetPushPullOutput(LE_GPIOPIN32_ACTIVE_HIGH, false);
-    le_gpioPin7_SetPushPullOutput(LE_GPIOPIN7_ACTIVE_HIGH, false);
+    NoLight();
+
     LE_INFO("Pin21 read PP - High: %d", le_gpioPin21_Read());
     LE_INFO("Pin32 read PP - High: %d", le_gpioPin32_Read());
     LE_INFO("Pin7 read PP - High: %d", le_gpioPin7_Read());
@@ -423,6 +436,10 @@ static void TimerHandle
     le_timer_Start(PollingTimer);
 }
 
+/*
+Description: This function is called every x seconds where x can be set in the configTree.
+             eg. $configset TrafficLight:/PollIntervalSec 10 int 
+*/
 static void Polling
 (
     le_timer_Ref_t timerRef
@@ -435,7 +452,7 @@ static void Polling
 
 //---------------------------------------------------
 /**
- 
+ Initializes GPIO Pins, and ConfigTree
  */
 //---------------------------------------------------
 COMPONENT_INIT
