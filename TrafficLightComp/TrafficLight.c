@@ -6,7 +6,7 @@
 #define SSL_ERROR_HELP    "Make sure your system date is set correctly (e.g. `date -s '2016-7-7'`)"
 #define SSL_ERROR_HELP_2  "You can check the minimum date for this SSL cert to work using: `openssl s_client -connect httpbin.org:443 2>/dev/null | openssl x509 -noout -dates`"
 
-static char * Url = "http://10.1.11.48/job/Legato-QA-Merged/lastCompletedBuild/api/json?tree=result";    ///<- Url has to be char * type and not an array, else curl will not perform
+static char * Url = "https://travis-ci.org/legatoproject/legato-af/builds/240568107";    ///<- Url has to be char * type and not an array, else curl will not perform
 
 static char * contentExpected;
 static bool exitCodeCheck;
