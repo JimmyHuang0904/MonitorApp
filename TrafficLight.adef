@@ -1,32 +1,32 @@
 executables:
 {
-	TrafficLight = ( TrafficLightComp )
+    TrafficLight = ( TrafficLightComp )
 }
 
 bindings:
 {
-    TrafficLight.TrafficLightComp.le_gpioPin21 -> gpioService.le_gpioPin21
-    TrafficLight.TrafficLightComp.le_gpioPin32 -> gpioService.le_gpioPin32
-    TrafficLight.TrafficLightComp.le_gpioPin7 -> gpioService.le_gpioPin7
+    TrafficLight.TrafficLightComp.le_gpioRED -> gpioService.le_gpioPin21
+    TrafficLight.TrafficLightComp.le_gpioYELLOW -> gpioService.le_gpioPin32
+    TrafficLight.TrafficLightComp.le_gpioGREEN -> gpioService.le_gpioPin7
 }
 
 processes:
 {
-	run:
-	{
-		(TrafficLight)
-	}
+    run:
+    {
+        (TrafficLight)
+    }
 }
 
 requires:
 {
-	file:
-	{
-		// needed for curl itself:
-		/lib/libcrypto.so.1.0.0 /lib/libcrypto.so.1.0.0
+    file:
+    {
+        // needed for curl itself:
+        /lib/libcrypto.so.1.0.0 /lib/libcrypto.so.1.0.0
         /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
         /usr/bin/curl /usr/bin/curl
-		/usr/lib/libcurl.so.5 /usr/lib/
+        /usr/lib/libcurl.so.5 /usr/lib/
         /usr/lib/libgnutls.so.28 /usr/lib/
         /usr/lib/libnettle.so.4 /usr/lib/
         /usr/lib/libhogweed.so.2 /usr/lib/
@@ -44,8 +44,8 @@ requires:
 
         /bin/sh /bin/sh
         /bin/date /bin/date
-	}
-	device:
+    }
+    device:
     {
         [rw] /dev/null /dev/null
         [r] /dev/urandom /dev/urandom
@@ -53,6 +53,6 @@ requires:
     }
     configTree:
     {
-    	[rw] TrafficLight
+        [rw] TrafficLight
     }
 }
