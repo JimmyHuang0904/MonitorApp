@@ -17,7 +17,7 @@ This was developed using:
 
 ### Schematic Diagram
 
-![TrafficLight Schematic](doc/TrafficLightSchematic.png)
+![TrafficLight Schematic](https://github.com/JimmyHuang0904/MonitorApp/blob/master/TrafficLight-1.png)
 
 ### Traffic Light States
 
@@ -36,6 +36,6 @@ Light Output  | Status
 :-------------|:---------------------------
  LIGHT_GREEN  | SUCESS
  LIGHT_YELLOW | ABORTED
-              | UNSTABLE
+ "            | UNSTABLE
  LIGHT_RED    | FAILURE
-              | NULL (cannot find keyword)
+ "            | NULL (cannot find keyword)
