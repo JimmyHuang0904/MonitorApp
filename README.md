@@ -23,14 +23,14 @@ This was developed using:
 
 exitCodeCheck | contentCodeCheck | HTTP Code | Light Output
 :-------------|------------------|-----------|:-------------
- true     | true       | 200    | GetResult();
- true     | true       | !200   | LIGHT_RED
- true     | false      | 200    | LIGHT_GREEN
- true     | false      | !200   | LIGHT_RED
- false    | true       | N/A    | GetResult();
- false    | false      | N/A    | LIGHT_OFF
+ true         | true             | 200       | contentState
+ true         | true             | !200      | LIGHT_RED
+ true         | false            | 200       | LIGHT_GREEN
+ true         | false            | !200      | LIGHT_RED
+ false        | true             | N/A       | contentState
+ false        | false            | N/A       | LIGHT_GREEN
 
-#### GetResult(); Function
+#### contentState
 
 Light Output  | Status
 :-------------|:---------------------------
