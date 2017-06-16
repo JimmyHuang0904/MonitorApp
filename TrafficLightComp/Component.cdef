@@ -1,9 +1,9 @@
 sources:
 {
-    TrafficLight.c
+    trafficLight.c
 }
 
-ldflags: 
+ldflags:
 {
     -lcurl
 }
@@ -13,8 +13,8 @@ requires:
     api:
     {
         le_cfg.api
-        le_gpioRED = le_gpio.api
-        le_gpioYELLOW = le_gpio.api
-        le_gpioGREEN = le_gpio.api
+        le_gpioRed = le_gpio.api
+        le_gpioYellow = le_gpio.api
+        le_gpioGreen = le_gpio.api
     }
 }

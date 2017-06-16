@@ -6,23 +6,24 @@
 #define SSL_ERROR_HELP    "Make sure your system date is set correctly (e.g. `date -s '2016-7-7'`)"
 #define SSL_ERROR_HELP_2  "Check the minimum date for this SSL cert to work"
 #define MIN(a,b) (((a)<(b))?(a):(b))
+#define ARRAY_SIZE 512
 
 // Url that is settable through config tree
-static char Url[512] = "";
+static char Url[ARRAY_SIZE] = "";
 
 // Polling timer interval in seconds
-static int pollingIntervalSec = 3;
+static int PollingIntervalSec = 3;
 
-static le_timer_Ref_t PollingTimer;
+// memory pool and timer reference
 static le_mem_PoolRef_t poolRef;
+static le_timer_Ref_t PollingTimer;
 
 // Header declaration
 static void GpioInit(void);
 static void ConfigTreeInit(void);
 static void ConfigTreeSet(void);
-static void ConfigTreeGet(void);
 static void Polling(le_timer_Ref_t timerRef);
-static void TimerHandle(void);
+static void TimerHandle();
 static bool ConfigGetExitCodeFlag(void);
 static bool ConfigGetContentFlag(void);
 
@@ -60,9 +61,9 @@ LightState_t;
 //--------------------------------------------------------------------------------------------------
 typedef enum
 {
-    FAIL,
-    WARNING,
-    PASS,
+    STATE_FAIL,
+    STATE_WARNING,
+    STATE_PASS,
 }
 MonitorState_t;
 
@@ -100,9 +101,9 @@ static void SetLightState
             break;
     }
 
-    le_gpioGREEN_SetPushPullOutput(LE_GPIOGREEN_ACTIVE_HIGH, gpioGreen);
-    le_gpioYELLOW_SetPushPullOutput(LE_GPIOYELLOW_ACTIVE_HIGH, gpioYellow);
-    le_gpioRED_SetPushPullOutput(LE_GPIORED_ACTIVE_HIGH, gpioRed);
+    le_gpioGreen_SetPushPullOutput(LE_GPIOGREEN_ACTIVE_HIGH, gpioGreen);
+    le_gpioYellow_SetPushPullOutput(LE_GPIOYELLOW_ACTIVE_HIGH, gpioYellow);
+    le_gpioRed_SetPushPullOutput(LE_GPIORED_ACTIVE_HIGH, gpioRed);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -154,33 +155,33 @@ static MonitorState_t CheckJenkinsResult
     if( strstr(actualData, "SUCCESS") )
     {
         contentResult = "SUCCESS";
-        status = PASS;
+        status = STATE_PASS;
     }
     else if( strstr(actualData, "FAILURE") )
     {
         contentResult = "FAILURE";
-        status = FAIL;
+        status = STATE_FAIL;
     }
     else if( strstr(actualData, "ABORTED") )
     {
         contentResult = "ABORTED";
-        status = WARNING;
+        status = STATE_WARNING;
     }
     else if( strstr(actualData, "UNSTABLE") )
     {
         contentResult = "UNSTABLE";
-        status = WARNING;
+        status = STATE_WARNING;
     }
     else
     {
         contentResult = "NULL";
         LE_ERROR("Cannot find keyword for statuses");
-        status = FAIL;
+        status = STATE_FAIL;
     }
 
     LE_INFO("contentResult = %s", contentResult);
 
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
+    iteratorRef = le_cfg_CreateWriteTxn("/info/content");
     le_cfg_SetString(iteratorRef, "contentResult", contentResult);
     le_cfg_CommitTxn(iteratorRef);
 
@@ -203,10 +204,10 @@ static MonitorState_t GetHTTPCode
     int httpCode;
     le_cfg_IteratorRef_t iteratorRef;
     MonitorState_t status;
-    
+
     curl_easy_getinfo(curlPtr, CURLINFO_RESPONSE_CODE, &httpCode);
 
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
+    iteratorRef = le_cfg_CreateWriteTxn("/info/exitCode");
     le_cfg_SetInt(iteratorRef, "exitCodeResult", httpCode);
     le_cfg_CommitTxn(iteratorRef);
 
@@ -214,11 +215,11 @@ static MonitorState_t GetHTTPCode
 
     if(httpCode == 200)
     {
-        status = PASS;
+        status = STATE_PASS;
     }
     else
     {
-        status = FAIL;
+        status = STATE_FAIL;
     }
 
     return status;
@@ -246,19 +247,11 @@ static void GetUrl
 
     bool exitCodeCheck;
     bool contentCheck;
-    MonitorState_t exitCodeState = PASS;
-    MonitorState_t contentState = PASS;
-
-    // Create a memory pool to store the htmlString. If exists, do not create anymore duplicates
-    if( !le_mem_FindPool("htmlString") )
-    {
-        LE_DEBUG("Created local memory pool 'htmlString'");
-        poolRef = le_mem_CreatePool("htmlString", sizeof(MemoryPool_t));
-    }
-    myPool.actualData = le_mem_ForceAlloc(poolRef);
+    MonitorState_t exitCodeState = STATE_PASS;
+    MonitorState_t contentState = STATE_PASS;
 
     // Get Url from config Tree
-    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
+    iteratorRef = le_cfg_CreateReadTxn("/");
     le_cfg_GetString(iteratorRef, "url", Url, sizeof(Url), Url);
     le_cfg_CancelTxn(iteratorRef);
 
@@ -277,6 +270,14 @@ static void GetUrl
             LE_ERROR("curlopt_writefunction failed: %s", curl_easy_strerror(res));
         }
 
+        // Create a memory pool to store the htmlString. If exists, do not create anymore duplicates
+        if( !le_mem_FindPool("htmlString") )
+        {
+            LE_DEBUG("Created local memory pool 'htmlString'");
+            poolRef = le_mem_CreatePool("htmlString", sizeof(MemoryPool_t));
+        }
+        myPool.actualData = le_mem_ForceAlloc(poolRef);
+
         res = curl_easy_setopt(curlPtr, CURLOPT_WRITEDATA, (void *) &myPool);
         if( res != CURLE_OK)
         {
@@ -293,25 +294,35 @@ static void GetUrl
                 LE_ERROR(SSL_ERROR_HELP_2);
             }
         }
-
-        exitCodeCheck = ConfigGetExitCodeFlag();
-        contentCheck = ConfigGetContentFlag();
-
-        LE_INFO("exitCodeCheck: %s", exitCodeCheck ? "true" : "false");
-        LE_INFO("contentCheck: %s", contentCheck ? "true" : "false");
-
-        // States are described in README.md
-        if(exitCodeCheck)
+        else
         {
-            exitCodeState = GetHTTPCode(curlPtr);
-        }
-        if(contentCheck)
-        {
-            contentState = CheckJenkinsResult(myPool.actualData);
-        }
-        SetLightState( MIN(exitCodeState,contentState) );
+            exitCodeCheck = ConfigGetExitCodeFlag();
+            contentCheck = ConfigGetContentFlag();
 
-        ConfigTreeSet();
+            LE_INFO("exitCodeCheck: %s", exitCodeCheck ? "true" : "false");
+            LE_INFO("contentCheck: %s", contentCheck ? "true" : "false");
+
+            // States are described in README.md
+            if(exitCodeCheck)
+            {
+                exitCodeState = GetHTTPCode(curlPtr);
+            }
+            if(contentCheck)
+            {
+                if( myPool.actualData[strlen(myPool.actualData)] != '\0')
+                {
+                    contentState = STATE_FAIL;
+                    LE_ERROR("There is no NULL char at the end of the buffer");
+                }
+                else
+                {
+                    contentState = CheckJenkinsResult(myPool.actualData);
+                }
+            }
+            SetLightState( MIN(exitCodeState,contentState) );
+
+            ConfigTreeSet();
+        }
 
         curl_easy_cleanup(curlPtr);
     }
@@ -328,7 +339,7 @@ static void GetUrl
  * Initializes the config tree to default values when the app is first ran
  *
  * @return
- *      config get TrafficLight:/
+ *      config get trafficLight:/
  */
 //--------------------------------------------------------------------------------------------------
 static void ConfigTreeInit
@@ -339,48 +350,48 @@ static void ConfigTreeInit
     le_cfg_IteratorRef_t iteratorRef;
 
     // Set default Url to the global variable Url
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/");
+    iteratorRef = le_cfg_CreateWriteTxn("/");
     le_cfg_SetString(iteratorRef, "url", Url);
     le_cfg_CommitTxn(iteratorRef);
 
-    /* config get TrafficLight:/info/exitCode/checkFlag
+    /* config get trafficLight:/info/exitCode/checkFlag
     Description: Settable flag to check the httpCode
     Default: true
     */
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
+    iteratorRef = le_cfg_CreateWriteTxn("/info/exitCode");
     le_cfg_SetBool(iteratorRef, "checkFlag", true);
     le_cfg_CommitTxn(iteratorRef);
 
-    /* config get TrafficLight:/info/exitCode/exitCodeResult
+    /* config get trafficLight:/info/exitCode/exitCodeResult
     Description: Writes the result of the httpCode. Error if httpCode != 200
     Default: 0
     */
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
+    iteratorRef = le_cfg_CreateWriteTxn("/info/exitCode");
     le_cfg_SetInt(iteratorRef, "exitCodeResult", 0);
     le_cfg_CommitTxn(iteratorRef);
 
-    /* config get TrafficLight:/info/content/CheckFlag
+    /* config get trafficLight:/info/content/CheckFlag
     Description: Settable flag to check the result of job status
     Default: true
     */
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
+    iteratorRef = le_cfg_CreateWriteTxn("/info/content");
     le_cfg_SetBool(iteratorRef, "checkFlag", true);
     le_cfg_CommitTxn(iteratorRef);
 
-    /* config get TrafficLight:/info/content/contentResult
+    /* config get trafficLight:/info/content/contentResult
     Description: Writes the result of job status. Outputs: SUCCESS, FAILURE, ABORTED, NULL, or UNSTABLE
     Default:
     */
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
+    iteratorRef = le_cfg_CreateWriteTxn("/info/content");
     le_cfg_SetString(iteratorRef, "contentResult", "");
     le_cfg_CommitTxn(iteratorRef);
 
-    /* config get TrafficLight:/pollingIntervalSec
+    /* config get trafficLight:/pollingIntervalSec
     Description: Polling timer intervals in second
     Default: 3 seconds
     */
-    iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/");
-    le_cfg_SetInt(iteratorRef, "pollingIntervalSec", pollingIntervalSec);
+    iteratorRef = le_cfg_CreateWriteTxn("/");
+    le_cfg_SetInt(iteratorRef, "pollingIntervalSec", PollingIntervalSec);
     le_cfg_CommitTxn(iteratorRef);
 }
 
@@ -404,19 +415,27 @@ static void ConfigTreeSet
 
     if(!exitCodeCheck)
     {
-        iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/exitCode");
+        iteratorRef = le_cfg_CreateWriteTxn("/info/exitCode");
         le_cfg_SetInt(iteratorRef, "exitCodeResult", 0);
         le_cfg_CommitTxn(iteratorRef);
     }
     if(!contentCheck)
     {
-        iteratorRef = le_cfg_CreateWriteTxn("TrafficLight:/info/content");
+        iteratorRef = le_cfg_CreateWriteTxn("/info/content");
         le_cfg_SetString(iteratorRef, "contentResult", "");
         le_cfg_CommitTxn(iteratorRef);
     }
     return;
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Fetches the boolean exitCodeCheck from the config tree /info/exitCode/checkFlag
+ *
+ * @return
+ *      exitCodeCheck - true/false
+ */
+//--------------------------------------------------------------------------------------------------
 static bool ConfigGetExitCodeFlag
 (
     void
@@ -425,13 +444,21 @@ static bool ConfigGetExitCodeFlag
     le_cfg_IteratorRef_t iteratorRef;
     bool exitCodeCheck;
 
-    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/info/exitCode");
+    iteratorRef = le_cfg_CreateReadTxn("/info/exitCode");
     exitCodeCheck = le_cfg_GetBool(iteratorRef, "checkFlag", false);
     le_cfg_CancelTxn(iteratorRef);
 
     return exitCodeCheck;
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Fetches the boolean contentCodeCheck from the config tree /info/content/checkFlag
+ *
+ * @return
+ *      contentCheck - true/false
+ */
+//--------------------------------------------------------------------------------------------------
 static bool ConfigGetContentFlag
 (
     void
@@ -440,37 +467,11 @@ static bool ConfigGetContentFlag
     le_cfg_IteratorRef_t iteratorRef;
     bool contentCheck;
 
-    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/info/content");
+    iteratorRef = le_cfg_CreateReadTxn("/info/content");
     contentCheck = le_cfg_GetBool(iteratorRef, "checkFlag", false);
     le_cfg_CancelTxn(iteratorRef);
 
     return contentCheck;
-}
-//--------------------------------------------------------------------------------------------------
-/**
- * Called by Polling function to update states from the config tree
- *
- * @return
- *      config get TrafficLight:/
- */
-//--------------------------------------------------------------------------------------------------
-static void ConfigTreeGet
-(
-    void
-)
-{
-    int timerset;
-    le_cfg_IteratorRef_t iteratorRef;
-
-    iteratorRef = le_cfg_CreateReadTxn("TrafficLight:/");
-    timerset = le_cfg_GetInt(iteratorRef, "pollingIntervalSec", pollingIntervalSec);
-    le_cfg_CancelTxn(iteratorRef);
-
-    if(timerset != pollingIntervalSec)
-    {
-        pollingIntervalSec = timerset;
-        TimerHandle();
-    }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -486,27 +487,27 @@ static void GpioInit
     void
 )
 {
-    le_gpioRED_Activate();
-    le_gpioRED_EnablePullUp();
+    le_gpioRed_Activate();
+    le_gpioRed_EnablePullUp();
 
-    le_gpioYELLOW_Activate();
-    le_gpioYELLOW_EnablePullUp();
+    le_gpioYellow_Activate();
+    le_gpioYellow_EnablePullUp();
 
-    le_gpioGREEN_Activate();
-    le_gpioGREEN_EnablePullUp();
+    le_gpioGreen_Activate();
+    le_gpioGreen_EnablePullUp();
 
     SetLightState(LIGHT_OFF);
 
-    LE_DEBUG("RED read PP - High: %d", le_gpioRED_Read());
-    LE_DEBUG("YELLOW read PP - High: %d", le_gpioYELLOW_Read());
-    LE_DEBUG("GREEN read PP - High: %d", le_gpioGREEN_Read());
+    LE_DEBUG("RED read PP - High: %d", le_gpioRed_Read());
+    LE_DEBUG("YELLOW read PP - High: %d", le_gpioYellow_Read());
+    LE_DEBUG("GREEN read PP - High: %d", le_gpioGreen_Read());
 }
 
 //--------------------------------------------------------------------------------------------------
 /**
  * 1. Initialize the indefinitely repeating PollingTimer to x seconds
  *
- * 2. Reset polling interval from ConfigTreeGet
+ * 2. Reset polling interval from Polling function
  *
  * @return
  *      A timer reference PollingTimer
@@ -521,8 +522,8 @@ static void TimerHandle
     {
         le_timer_Stop(PollingTimer);
     }
-    LE_DEBUG("pollingIntervalSec IS %i", pollingIntervalSec);
-    le_clk_Time_t interval = {pollingIntervalSec, 0}; // first parameter is the seconds
+    LE_DEBUG("pollingIntervalSec is %i", PollingIntervalSec);
+    le_clk_Time_t interval = {PollingIntervalSec, 0}; // first parameter is the seconds
     le_timer_SetInterval(PollingTimer, interval);
     le_timer_SetRepeat(PollingTimer, 0); // repeat indefinitely
     le_timer_SetHandler(PollingTimer, Polling);
@@ -532,7 +533,8 @@ static void TimerHandle
 //--------------------------------------------------------------------------------------------------
 /**
  * This function is called every x seconds where x can be set in the configTree.
- * eg. $config set TrafficLight:/pollingIntervalSec 10 int
+ *
+ * eg. config set trafficLight:/pollingIntervalSec 10 int
  */
 //--------------------------------------------------------------------------------------------------
 static void Polling
@@ -540,8 +542,20 @@ static void Polling
     le_timer_Ref_t timerRef      ///< [IN] timer reference for changing intervals, starting and stopping
 )
 {
+    int timerset;
+    le_cfg_IteratorRef_t iteratorRef;
+
+    iteratorRef = le_cfg_CreateReadTxn("/");
+    timerset = le_cfg_GetInt(iteratorRef, "pollingIntervalSec", PollingIntervalSec);
+    le_cfg_CancelTxn(iteratorRef);
+
+    if(timerset != PollingIntervalSec)
+    {
+        PollingIntervalSec = timerset;
+        TimerHandle();
+    }
     LE_INFO("-------------------------- In polling function--------------------");
-    ConfigTreeGet();
+
     GetUrl();
 }
 
@@ -552,12 +566,12 @@ static void Polling
 //--------------------------------------------------------------------------------------------------
 static void GpioDeinit
 (
-    void 
+    void
 )
 {
-    le_gpioGREEN_Deactivate();
-    le_gpioYELLOW_Deactivate();
-    le_gpioRED_Deactivate();
+    le_gpioGreen_Deactivate();
+    le_gpioYellow_Deactivate();
+    le_gpioRed_Deactivate();
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -573,6 +587,7 @@ static void SigChildEventHandler
     int sigNum
 )
 {
+    le_timer_Stop(PollingTimer);
     LE_INFO("Deactivating GPIO Pins");
     GpioDeinit();
 }

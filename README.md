@@ -3,23 +3,25 @@ TrafficLight App
 
 ### Description
 
-TrafficLight App is primarily used to monitor the last complete build of any Jenkins job results. It 
-polls a settable URL at a settable interval that can be displayed on the device configTree. 
+TrafficLight App is primarily used to monitor the last complete build of any Jenkins job results.
+It polls a settable URL at a settable interval that can be displayed on the device config tree or
+LE_INFO logs. The user can toggle exitCodeCheck and contentCodeCheck in the config tree to individually
+check the results of the HTTP Code, content result, or both (See States below).
 
 This was developed using:
 * legato version 16.10.3
 * WP85 release 14
 * [MangOH Green](http://mangoh.io/mangoh-green.html) + [IoT expansion card (for GPIO)](http://mangoh.io/documentation/iot_expansion_cards.html)
-* [TrafficLight](https://www.adafruit.com/product/2993)
+* [Tower Light 3 colors - 12VDC](https://www.adafruit.com/product/2993)
 * 3x 2N3904 transistor
 * 3x 1K Ohm resistor
 * 3x 100 Ohm resistor
 
 ### Schematic Diagram
 
-![TrafficLight Schematic](https://github.com/JimmyHuang0904/MonitorApp/blob/master/TrafficLight-1.png)
+![TrafficLight Schematic](doc/TrafficLightSchematic.png)
 
-### Traffic Light States
+### States
 
 exitCodeCheck | contentCodeCheck | HTTP Code | Light Output
 :-------------|------------------|-----------|:-------------
@@ -34,7 +36,7 @@ exitCodeCheck | contentCodeCheck | HTTP Code | Light Output
 
 Light Output  | Status
 :-------------|:---------------------------
- LIGHT_GREEN  | SUCESS
+ LIGHT_GREEN  | SUCCESS
  LIGHT_YELLOW | ABORTED
  "            | UNSTABLE
  LIGHT_RED    | FAILURE
