@@ -9,14 +9,14 @@
 #define ARRAY_SIZE 512
 
 // Url that is settable through config tree
-static char Url[ARRAY_SIZE] = "";
+static char Url[ARRAY_SIZE] = "http://10.1.11.48/job/Legato-QA-Merged/lastCompletedBuild/api/json?tree=result";
 
 // Polling timer interval in seconds
 static int PollingIntervalSec = 3;
 
-// memory pool and timer reference
-static le_mem_PoolRef_t poolRef;
-static le_timer_Ref_t PollingTimer;
+// Memory pool and timer reference
+static le_mem_PoolRef_t PoolRef;
+static le_timer_Ref_t PollingTimer = NULL;
 
 // Header declaration
 static void GpioInit(void);
@@ -274,9 +274,9 @@ static void GetUrl
         if( !le_mem_FindPool("htmlString") )
         {
             LE_DEBUG("Created local memory pool 'htmlString'");
-            poolRef = le_mem_CreatePool("htmlString", sizeof(MemoryPool_t));
+            PoolRef = le_mem_CreatePool("htmlString", sizeof(MemoryPool_t));
         }
-        myPool.actualData = le_mem_ForceAlloc(poolRef);
+        myPool.actualData = le_mem_ForceAlloc(PoolRef);
 
         res = curl_easy_setopt(curlPtr, CURLOPT_WRITEDATA, (void *) &myPool);
         if( res != CURLE_OK)
@@ -582,7 +582,7 @@ static void GpioDeinit
  *      Deactivated GPIO pins
  */
 //--------------------------------------------------------------------------------------------------
-static void SigChildEventHandler
+static void SigTermEventHandler
 (
     int sigNum
 )
@@ -599,13 +599,13 @@ static void SigChildEventHandler
 //---------------------------------------------------
 COMPONENT_INIT
 {
-    le_sig_Block(SIGTERM);
-    le_sig_SetEventHandler(SIGTERM, SigChildEventHandler);
-
     curl_global_init(CURL_GLOBAL_ALL);
     GpioInit();
     ConfigTreeInit();
 
     PollingTimer = le_timer_Create("PollingTimer");
     TimerHandle();
+
+    le_sig_Block(SIGTERM);
+    le_sig_SetEventHandler(SIGTERM, SigTermEventHandler);
 }
