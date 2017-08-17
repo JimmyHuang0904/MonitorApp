@@ -599,6 +599,10 @@ static void SigTermEventHandler
 //---------------------------------------------------
 COMPONENT_INIT
 {
+	const char * wakeUpTag = "wakeUpTag";
+    le_pm_WakeupSourceRef_t wakeUpRef = le_pm_NewWakeupSource(1, wakeUpTag);
+    le_pm_StayAwake(wakeUpRef);
+
     curl_global_init(CURL_GLOBAL_ALL);
     GpioInit();
     ConfigTreeInit();
