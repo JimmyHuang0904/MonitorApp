@@ -9,10 +9,10 @@
 #define ARRAY_SIZE 512
 
 // Url that is settable through config tree
-static char Url[ARRAY_SIZE] = "http://10.1.11.48/job/Legato-QA-Merged/lastCompletedBuild/api/json?tree=result";
+static char Url[ARRAY_SIZE] = "";
 
 // Polling timer interval in seconds
-static int PollingIntervalSec = 3;
+static int PollingIntervalSec = 10;
 
 // Memory pool and timer reference
 static le_mem_PoolRef_t PoolRef;
@@ -282,6 +282,8 @@ static void GetUrl
         if( res != CURLE_OK)
         {
             LE_ERROR("curlopt_writedata failed: %s", curl_easy_strerror(res));
+
+            SetLightState(STATE_WARNING);
         }
 
         res = curl_easy_perform(curlPtr);
@@ -293,6 +295,8 @@ static void GetUrl
                 LE_ERROR(SSL_ERROR_HELP);
                 LE_ERROR(SSL_ERROR_HELP_2);
             }
+
+            SetLightState(STATE_WARNING);
         }
         else
         {
@@ -599,7 +603,7 @@ static void SigTermEventHandler
 //---------------------------------------------------
 COMPONENT_INIT
 {
-	const char * wakeUpTag = "wakeUpTag";
+    const char * wakeUpTag = "wakeUpTag";
     le_pm_WakeupSourceRef_t wakeUpRef = le_pm_NewWakeupSource(1, wakeUpTag);
     le_pm_StayAwake(wakeUpRef);
 
