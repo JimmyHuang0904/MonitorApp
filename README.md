@@ -25,14 +25,14 @@ This was developed using:
 
 exitCodeCheck | contentCodeCheck | HTTP Code | Light Output
 :-------------|------------------|-----------|:-------------
- true         | true             | 200       | contentState
+ true         | true             | 200       | [contentState](#headin)
  true         | true             | !200      | LIGHT_RED
  true         | false            | 200       | LIGHT_GREEN
  true         | false            | !200      | LIGHT_RED
- false        | true             | N/A       | contentState
+ false        | true             | N/A       | [contentState](#headin)
  false        | false            | N/A       | LIGHT_GREEN
 
-#### contentState
+#### contentState<a name="headin"></a>
 
 Light Output  | Status
 :-------------|:---------------------------
@@ -41,3 +41,10 @@ Light Output  | Status
  "            | UNSTABLE
  LIGHT_RED    | FAILURE
  "            | NULL (cannot find keyword)
+ 
+ cURL ERROR also defaults to LIGHT_YELLOW for easy debugging issues
+ 
+ ### Picture
+ 
+ This is what it looks like in action! At the time of this picture, it was monitoring our merges and it seems like we are doing a good job :grinning:
+ ![This is what it looks like in action](doc/trafficLight.jpg)
