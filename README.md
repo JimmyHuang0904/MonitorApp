@@ -9,13 +9,14 @@ LE_INFO logs. The user can toggle exitCodeCheck and contentCodeCheck in the conf
 check the results of the HTTP Code, content result, or both (See States below).
 
 This was developed using:
-* legato version 16.10.3
+* Legato version 16.10.3
 * WP85 release 14
-* [MangOH Green](http://mangoh.io/mangoh-green.html) + [IoT expansion card (for GPIO)](http://mangoh.io/documentation/iot_expansion_cards.html)
+* [MangOH Green](http://mangoh.io/mangoh-green) + [IoT expansion card (for GPIO)](http://mangoh.io/documentation/iot_expansion_cards.html)
 * [Tower Light 3 colors - 12VDC](https://www.adafruit.com/product/2993)
 * 3x 2N3904 transistor
 * 3x 1K Ohm resistor
 * 3x 100 Ohm resistor
+* 12VDC 1A Power Supply
 
 ### Schematic Diagram
 
