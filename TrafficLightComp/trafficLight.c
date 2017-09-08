@@ -9,7 +9,7 @@
 #define ARRAY_SIZE 512
 
 // Url that is settable through config tree
-static char Url[ARRAY_SIZE] = "";
+static char Url[ARRAY_SIZE] = "http://monitor-legato/uchiwa/metrics";
 
 // Polling timer interval in seconds
 static int PollingIntervalSec = 10;
@@ -134,60 +134,80 @@ static size_t WriteCallback
     return realsize;
 }
 
-//--------------------------------------------------------------------------------------------------
-/**
- * Set the light states by finding the respective keyword in the buffer
- *
- * @return
- *      light states
- *      contentResult in config tree
- */
-//--------------------------------------------------------------------------------------------------
-static MonitorState_t CheckJenkinsResult
+static int GetIndexOfArrayValue( char * string, size_t size, char value )
+{
+    int index = 0;
+
+    while ( index < size && string[index] != value ) ++index;
+
+    return ( index == size ? -1 : index );
+}
+
+static MonitorState_t CheckSensuResult
 (
     char * actualData     ///< [IN] Data that was handled in GetUrl with WriteCallback
 )
 {
-    char * contentResult;
+    int index = 0;
+    size_t length;
     MonitorState_t status;
     le_cfg_IteratorRef_t iteratorRef;
 
-    if( strstr(actualData, "SUCCESS") )
+    length = strlen(actualData);
+
+    while( index != -1 )
     {
-        contentResult = "SUCCESS";
-        status = STATE_PASS;
-    }
-    else if( strstr(actualData, "FAILURE") )
-    {
-        contentResult = "FAILURE";
-        status = STATE_FAIL;
-    }
-    else if( strstr(actualData, "ABORTED") )
-    {
-        contentResult = "ABORTED";
-        status = STATE_WARNING;
-    }
-    else if( strstr(actualData, "UNSTABLE") )
-    {
-        contentResult = "UNSTABLE";
-        status = STATE_WARNING;
-    }
-    else
-    {
-        contentResult = "NULL";
-        LE_ERROR("Cannot find keyword for statuses");
-        status = STATE_FAIL;
+        index = MIN(GetIndexOfArrayValue(actualData, length, 'c'), GetIndexOfArrayValue(actualData, length, 'w'));
+
+        // Truncate string until the string starts where 'c' is
+        memmove(actualData, actualData + index, length - index + 1);
+        length = strlen(actualData);
+
+        // Check if the keyword is actually critical and find if there is a failure on the key
+        if( !strncmp(actualData, "critical", 8) )
+        {
+            // Looks to see if the key to the mapping of "critical" is 0. If not, then there is an error
+            if( actualData[10] != '0')
+            {
+                LE_ERROR("There are %c machines in critical state", actualData[10]);
+
+                iteratorRef = le_cfg_CreateWriteTxn("/info/content");
+                le_cfg_SetString(iteratorRef, "contentResult", "CRITICAL");
+                le_cfg_CommitTxn(iteratorRef);
+
+                return STATE_FAIL;
+            }
+        }
+        // Check if the keyword is actually warning and find if there is a failure on the key
+        if( !strncmp(actualData, "warning", 7) )
+        {
+            // Looks to see if the key to the mapping of "critical" is 0. If not, then there is an error
+            if( actualData[9] != '0')
+            {
+                LE_ERROR("There are %c machines in warning state", actualData[9]);
+
+                status = STATE_WARNING;
+            }
+        }
+
+        memmove(actualData, actualData + 1, length);
+        length = strlen(actualData);
     }
 
-    LE_INFO("contentResult = %s", contentResult);
+    if( status == STATE_WARNING )
+    {
+        iteratorRef = le_cfg_CreateWriteTxn("/info/content");
+        le_cfg_SetString(iteratorRef, "contentResult", "WARNING");
+        le_cfg_CommitTxn(iteratorRef);
 
+        return STATE_WARNING;
+    }
     iteratorRef = le_cfg_CreateWriteTxn("/info/content");
-    le_cfg_SetString(iteratorRef, "contentResult", contentResult);
+    le_cfg_SetString(iteratorRef, "contentResult", "SUCCESS");
     le_cfg_CommitTxn(iteratorRef);
 
-    return status;
+    return STATE_PASS;
 }
-
 //--------------------------------------------------------------------------------------------------
 /**
  * Gets the HTTP code status of the Url every x seconds only if exitCodeCheck flag is true
@@ -320,7 +340,7 @@ static void GetUrl
                 }
                 else
                 {
-                    contentState = CheckJenkinsResult(myPool.actualData);
+                    contentState = CheckSensuResult(myPool.actualData);
                 }
             }
             SetLightState( MIN(exitCodeState,contentState) );
@@ -603,7 +623,7 @@ static void SigTermEventHandler
 //---------------------------------------------------
 COMPONENT_INIT
 {
-    const char * wakeUpTag = "wakeUpTag";
+    const char * wakeUpTag = "trafficLightWakeUpTag";
     le_pm_WakeupSourceRef_t wakeUpRef = le_pm_NewWakeupSource(1, wakeUpTag);
     le_pm_StayAwake(wakeUpRef);
 

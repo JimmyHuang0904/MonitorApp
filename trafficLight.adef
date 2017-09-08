@@ -5,9 +5,9 @@ executables:
 
 bindings:
 {
-    trafficLight.TrafficLightComp.le_gpioRed -> gpioService.le_gpioPin21
-    trafficLight.TrafficLightComp.le_gpioYellow -> gpioService.le_gpioPin32
-    trafficLight.TrafficLightComp.le_gpioGreen -> gpioService.le_gpioPin7
+    trafficLight.TrafficLightComp.le_gpioRed -> gpioService.le_gpioPin8
+    trafficLight.TrafficLightComp.le_gpioYellow -> gpioService.le_gpioPin13
+    trafficLight.TrafficLightComp.le_gpioGreen -> gpioService.le_gpioPin33
 
     trafficLight.TrafficLightComp.le_pm -> powerMgr.le_pm
 }
