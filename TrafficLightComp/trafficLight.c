@@ -9,7 +9,7 @@
 #define ARRAY_SIZE 512
 
 // Url that is settable through config tree
-static char Url[ARRAY_SIZE] = "";
+static char Url[ARRAY_SIZE] = "http://10.1.60.253/uchiwa/metrics";
 
 // Polling timer interval in seconds
 static int PollingIntervalSec = 10;
@@ -293,7 +293,7 @@ static void GetUrl
         // Create a memory pool to store the htmlString. If exists, do not create anymore duplicates
         if( !le_mem_FindPool("htmlString") )
         {
-            LE_DEBUG("Created local memory pool 'htmlString'");
+            LE_INFO("Created local memory pool 'htmlString'");
             PoolRef = le_mem_CreatePool("htmlString", sizeof(MemoryPool_t));
         }
         myPool.actualData = le_mem_ForceAlloc(PoolRef);
@@ -347,7 +347,6 @@ static void GetUrl
 
             ConfigTreeSet();
         }
-
         curl_easy_cleanup(curlPtr);
     }
     else
@@ -576,6 +575,10 @@ static void Polling
     if(timerset != PollingIntervalSec)
     {
         PollingIntervalSec = timerset;
+        if(PollingIntervalSec <= 0){
+            LE_ERROR("pollingIntervalSec is set to %i. It should be a positive integer value, resetting polling time to 10 seconds", PollingIntervalSec);
+            PollingIntervalSec = 10; // There was an error, PollingIntervalSec was not set a positive integer number
+        }
         TimerHandle();
     }
     LE_INFO("-------------------------- In polling function--------------------");
