@@ -9,7 +9,7 @@
 #define ARRAY_SIZE 512
 
 // Url that is settable through config tree
-static char Url[ARRAY_SIZE] = "http://10.1.60.253/uchiwa/metrics";
+static char Url[ARRAY_SIZE] = "";
 
 // Polling timer interval in seconds
 static int PollingIntervalSec = 10;
@@ -24,8 +24,7 @@ static void ConfigTreeInit(void);
 static void ConfigTreeSet(void);
 static void Polling(le_timer_Ref_t timerRef);
 static void TimerHandle();
-static bool ConfigGetExitCodeFlag(void);
-static bool ConfigGetContentFlag(void);
+static bool ConfigGetBool(char *);
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -134,7 +133,72 @@ static size_t WriteCallback
     return realsize;
 }
 
-static int GetIndexOfArrayValue( char * string, size_t size, char value )
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the light states by finding the respective keyword in the buffer
+ *
+ * @return
+ *      light states
+ *      contentResult in config tree
+ */
+//--------------------------------------------------------------------------------------------------
+static MonitorState_t CheckJenkinsResult
+(
+    char * actualData     ///< [IN] Data that was handled in GetUrl with WriteCallback
+)
+{
+    char * contentResult;
+    MonitorState_t status;
+    le_cfg_IteratorRef_t iteratorRef;
+
+    if( strstr(actualData, "SUCCESS") )
+    {
+        contentResult = "SUCCESS";
+        status = STATE_PASS;
+    }
+    else if( strstr(actualData, "FAILURE") )
+    {
+        contentResult = "FAILURE";
+        status = STATE_FAIL;
+    }
+    else if( strstr(actualData, "ABORTED") )
+    {
+        contentResult = "ABORTED";
+        status = STATE_WARNING;
+    }
+    else if( strstr(actualData, "UNSTABLE") )
+    {
+        contentResult = "UNSTABLE";
+        status = STATE_WARNING;
+    }
+    else
+    {
+        contentResult = "NULL";
+        LE_ERROR("Cannot find keyword for statuses");
+        status = STATE_FAIL;
+    }
+
+    LE_INFO("contentResult = %s", contentResult);
+
+    iteratorRef = le_cfg_CreateWriteTxn("/info/content");
+    le_cfg_SetString(iteratorRef, "contentResult", contentResult);
+    le_cfg_CommitTxn(iteratorRef);
+
+    return status;
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Takes a char array and given a character value, return the index of the array with the
+ * first occurence of the value.
+ */
+//--------------------------------------------------------------------------------------------------
+static int GetIndexOfArrayValue
+(
+    char * string,
+    size_t size,
+    char value
+)
 {
     int index = 0;
 
@@ -143,6 +207,15 @@ static int GetIndexOfArrayValue( char * string, size_t size, char value )
     return ( index == size ? -1 : index );
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the light states by finding the respective keyword in the buffer
+ *
+ * @return
+ *      light states
+ *      contentResult in config tree
+ */
+//--------------------------------------------------------------------------------------------------
 static MonitorState_t CheckSensuResult
 (
     char * actualData     ///< [IN] Data that was handled in GetUrl with WriteCallback
@@ -150,7 +223,6 @@ static MonitorState_t CheckSensuResult
 {
     int index = 0;
     size_t length;
-    MonitorState_t status;
     le_cfg_IteratorRef_t iteratorRef;
 
     length = strlen(actualData);
@@ -181,12 +253,16 @@ static MonitorState_t CheckSensuResult
         // Check if the keyword is actually warning and find if there is a failure on the key
         if( !strncmp(actualData, "warning", 7) )
         {
-            // Looks to see if the key to the mapping of "critical" is 0. If not, then there is an error
+            // Looks to see if the key to the mapping of "warning" is 0. If not, then there is an error
             if( actualData[9] != '0')
             {
                 LE_ERROR("There are %c machines in warning state", actualData[9]);
 
-                status = STATE_WARNING;
+                iteratorRef = le_cfg_CreateWriteTxn("/info/content");
+                le_cfg_SetString(iteratorRef, "contentResult", "WARNING");
+                le_cfg_CommitTxn(iteratorRef);
+
+                return STATE_WARNING;
             }
         }
 
@@ -194,20 +270,13 @@ static MonitorState_t CheckSensuResult
         length = strlen(actualData);
     }
 
-    if( status == STATE_WARNING )
-    {
-        iteratorRef = le_cfg_CreateWriteTxn("/info/content");
-        le_cfg_SetString(iteratorRef, "contentResult", "WARNING");
-        le_cfg_CommitTxn(iteratorRef);
-
-        return STATE_WARNING;
-    }
     iteratorRef = le_cfg_CreateWriteTxn("/info/content");
     le_cfg_SetString(iteratorRef, "contentResult", "SUCCESS");
     le_cfg_CommitTxn(iteratorRef);
 
     return STATE_PASS;
 }
+
 //--------------------------------------------------------------------------------------------------
 /**
  * Gets the HTTP code status of the Url every x seconds only if exitCodeCheck flag is true
@@ -265,8 +334,6 @@ static void GetUrl
 
     MemoryPool_t myPool;
 
-    bool exitCodeCheck;
-    bool contentCheck;
     MonitorState_t exitCodeState = STATE_PASS;
     MonitorState_t contentState = STATE_PASS;
 
@@ -293,7 +360,7 @@ static void GetUrl
         // Create a memory pool to store the htmlString. If exists, do not create anymore duplicates
         if( !le_mem_FindPool("htmlString") )
         {
-            LE_INFO("Created local memory pool 'htmlString'");
+            LE_DEBUG("Created local memory pool 'htmlString'");
             PoolRef = le_mem_CreatePool("htmlString", sizeof(MemoryPool_t));
         }
         myPool.actualData = le_mem_ForceAlloc(PoolRef);
@@ -320,18 +387,13 @@ static void GetUrl
         }
         else
         {
-            exitCodeCheck = ConfigGetExitCodeFlag();
-            contentCheck = ConfigGetContentFlag();
-
-            LE_INFO("exitCodeCheck: %s", exitCodeCheck ? "true" : "false");
-            LE_INFO("contentCheck: %s", contentCheck ? "true" : "false");
-
             // States are described in README.md
-            if(exitCodeCheck)
+            if(ConfigGetBool("/info/exitCode/checkFlag"))
             {
                 exitCodeState = GetHTTPCode(curlPtr);
             }
-            if(contentCheck)
+
+            if(ConfigGetBool("/info/content/checkFlag"))
             {
                 if( myPool.actualData[strlen(myPool.actualData)] != '\0')
                 {
@@ -340,13 +402,22 @@ static void GetUrl
                 }
                 else
                 {
-                    contentState = CheckSensuResult(myPool.actualData);
+                    if(ConfigGetBool("/checkSensu")){
+                        contentState = CheckSensuResult(myPool.actualData);
+                    }
+                    else if(ConfigGetBool("/checkJenkins")){
+                        contentState = CheckJenkinsResult(myPool.actualData);
+                    }
+                    else{
+                        LE_ERROR("Not checking Sensu-client or jenkins job");
+                    }
                 }
             }
             SetLightState( MIN(exitCodeState,contentState) );
 
             ConfigTreeSet();
         }
+
         curl_easy_cleanup(curlPtr);
     }
     else
@@ -416,6 +487,22 @@ static void ConfigTreeInit
     iteratorRef = le_cfg_CreateWriteTxn("/");
     le_cfg_SetInt(iteratorRef, "pollingIntervalSec", PollingIntervalSec);
     le_cfg_CommitTxn(iteratorRef);
+
+    /* config get trafficLight:/checkSensu
+    Description: Boolean to determine whether to check sensu
+    Default: true
+    */
+    iteratorRef = le_cfg_CreateWriteTxn("/");
+    le_cfg_SetBool(iteratorRef, "checkSensu", true);
+    le_cfg_CommitTxn(iteratorRef);
+
+    /* config get trafficLight:/checkJenkins
+    Description: Boolean to determine whether to check jenkins job
+    Default: false
+    */
+    iteratorRef = le_cfg_CreateWriteTxn("/");
+    le_cfg_SetBool(iteratorRef, "checkJenkins", false);
+    le_cfg_CommitTxn(iteratorRef);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -430,71 +517,40 @@ static void ConfigTreeSet
 )
 {
     le_cfg_IteratorRef_t iteratorRef;
-    bool exitCodeCheck;
-    bool contentCheck;
 
-    exitCodeCheck = ConfigGetExitCodeFlag();
-    contentCheck = ConfigGetContentFlag();
-
-    if(!exitCodeCheck)
+    if(!ConfigGetBool("/info/exitCode/checkFlag"))
     {
         iteratorRef = le_cfg_CreateWriteTxn("/info/exitCode");
         le_cfg_SetInt(iteratorRef, "exitCodeResult", 0);
         le_cfg_CommitTxn(iteratorRef);
     }
-    if(!contentCheck)
+    if(!ConfigGetBool("/info/content/checkFlag"))
     {
         iteratorRef = le_cfg_CreateWriteTxn("/info/content");
         le_cfg_SetString(iteratorRef, "contentResult", "");
         le_cfg_CommitTxn(iteratorRef);
     }
-    return;
 }
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Fetches the boolean exitCodeCheck from the config tree /info/exitCode/checkFlag
+ * Fetches a boolean value from the config tree given the path
  *
- * @return
- *      exitCodeCheck - true/false
  */
 //--------------------------------------------------------------------------------------------------
-static bool ConfigGetExitCodeFlag
+static bool ConfigGetBool
 (
-    void
+    char * pathToTree
 )
 {
     le_cfg_IteratorRef_t iteratorRef;
-    bool exitCodeCheck;
+    bool boolVal;
 
-    iteratorRef = le_cfg_CreateReadTxn("/info/exitCode");
-    exitCodeCheck = le_cfg_GetBool(iteratorRef, "checkFlag", false);
+    iteratorRef = le_cfg_CreateReadTxn(pathToTree);
+    boolVal = le_cfg_GetBool(iteratorRef, "", false);
     le_cfg_CancelTxn(iteratorRef);
 
-    return exitCodeCheck;
-}
-
-//--------------------------------------------------------------------------------------------------
-/**
- * Fetches the boolean contentCodeCheck from the config tree /info/content/checkFlag
- *
- * @return
- *      contentCheck - true/false
- */
-//--------------------------------------------------------------------------------------------------
-static bool ConfigGetContentFlag
-(
-    void
-)
-{
-    le_cfg_IteratorRef_t iteratorRef;
-    bool contentCheck;
-
-    iteratorRef = le_cfg_CreateReadTxn("/info/content");
-    contentCheck = le_cfg_GetBool(iteratorRef, "checkFlag", false);
-    le_cfg_CancelTxn(iteratorRef);
-
-    return contentCheck;
+    return boolVal;
 }
 
 //--------------------------------------------------------------------------------------------------
