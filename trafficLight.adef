@@ -25,7 +25,7 @@ requires:
     file:
     {
         // needed for curl itself:
-        /lib/libcrypto.so.1.0.0 /lib/libcrypto.so.1.0.0
+        /lib/libcrypt.so.1 /lib/libcrypt.so.1
         /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
         /usr/bin/curl /usr/bin/curl
         /usr/lib/libcurl.so.5 /usr/lib/
